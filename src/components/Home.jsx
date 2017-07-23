@@ -24,6 +24,9 @@ export default class Home extends React.Component {
     if(_.isEmpty(this.props.employees)) {
       this.props.getAllEmployees();
     }
+    if(_.isEmpty(this.props.defaultConfig)) {
+      this.props.getDefaultConfig();
+    }
   }
 
   render() {
@@ -39,6 +42,7 @@ export default class Home extends React.Component {
               <div className="card-block">
                 <h4 className="card-title">{employee.name}</h4>
                 <p className="card-text">{employee.position}</p>
+                <p className="card-text">{this.props.defaultConfig}</p>
                 <Link to={`/${employee.id}`} className="btn">Details</Link>
               </div>
             </li>)

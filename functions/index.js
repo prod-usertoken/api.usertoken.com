@@ -57,4 +57,20 @@ app.get('/:userId?', (req, res) => {
   }
 });
 
+app.get('/:configId?', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=60, s-maxage=180');
+  if (req.params.configId) {
+    // client is requesting config page with configId
+    // load the config data for that configId
+    database.getConfigById(req.params.configId).then(resp => {
+      renderApplication(req.url, res, resp);
+    });
+  } else {
+    // index page. load default config
+    database.getDefaultConfig().then(resp => {
+      renderApplication(req.url, res, resp);
+    });
+  }
+});
+
 exports.app = functions.https.onRequest(app);

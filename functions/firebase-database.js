@@ -27,7 +27,6 @@ const initializeApp = config => {
     firebase.initializeApp(config);
   }
 };
-
 // Get and return all employees
 const getAllEmployees = () => {
   return firebase.database().ref('/employees').orderByChild('level').once('value').then(snap => {
@@ -52,8 +51,25 @@ const getEmployeeById = employeeId => {
   });
 };
 
+// Get and return all employees
+const getDefaultConfig = () => {
+  return firebase.database().ref('/usertoken/configs/default').once('value').then(snap => {
+    return {config: snap.val()};
+  });
+};
+
+// Get and return an employee by their id number
+// also fetch all of the employee's direct reports (if any)
+const getConfigById = configId => {
+  return firebase.database().ref(`/usertoken/configs/${configId}`).once('value').then(snap => {
+    return {config: snap.val()};
+  });
+};
+
 module.exports = {
   getAllEmployees,
   getEmployeeById,
+  getDefaultConfig,
+  getConfigById,
   initializeApp
 };

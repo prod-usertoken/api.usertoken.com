@@ -20,10 +20,17 @@ import _ from 'lodash';
 
 export default class User extends React.Component {
   componentDidMount() {
-    // if no data is present, load the employee data from the database
+    // if no data is present, load the config and employee data from the database
+    if(_.isEmpty(this.props.defaultConfig)) {
+      this.props.defaultConfig();
+    }
     if(_.isEmpty(this.props.currentEmployee) ||
       this.props.currentEmployee.employee.id !== this.props.match.params.id) {
       this.props.getEmployeeById(this.props.match.params.id);
+      if(_.isEmpty(this.props.currentConfig) ||
+        this.props.currentEmployee.employee.id !== this.props.match.params.config) {
+        this.props.getConfigById(this.props.match.params.config); // employee has same id as config.id
+      }
     }
   }
 
@@ -32,6 +39,11 @@ export default class User extends React.Component {
       // user has navigated to a new employee details page
       // load data for that employee and set to state
       this.props.getEmployeeById(nextProps.match.params.id);
+    }
+    if (nextProps.match.params.config !== this.props.match.params.config) {
+      // user has navigated to a new employee details page
+      // load data for that employee and set to state
+      this.props.getConfigById(nextProps.match.params.config);
     }
   }
 
@@ -68,6 +80,7 @@ export default class User extends React.Component {
       return <div className="container loader">Loading...</div>;
     }
     const { employee } = this.props.currentEmployee;
+    const { config } = this.props.currentConfig;
     return (
       <div className='user-details'>
         <div className='hero'>
@@ -84,6 +97,10 @@ export default class User extends React.Component {
         <div className='container'>
           <table className='table table-striped details-table'>
             <tbody>
+              <tr>
+                <td className='title'>Config: </td>
+                <td>{config}</td>
+              </tr>
               <tr>
                 <td className='title'>Location: </td>
                 <td>{employee.location}</td>

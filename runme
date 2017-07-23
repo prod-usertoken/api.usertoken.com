@@ -1,3 +1,4 @@
-( cd functions;yarn install)
-( cd src;yarn install;npm run build )
-firebase deploy
+#( cd functions;yarn install)
+#( cd src;yarn install;npm run build )
+#firebase deploy --project api-functions-65e46
+firebase serve --only hosting,functions --project api-functions-65e46
