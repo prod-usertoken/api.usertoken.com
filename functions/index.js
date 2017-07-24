@@ -1,5 +1,5 @@
 /**
- * Copyright 2016 Google Inc. All Rights Reserved.
+ * Copyright 2017 Google Inc. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,63 +14,154 @@
  * limitations under the License.
  */
 
+'use strict';
+console.log = function(){}
+
 const functions = require('firebase-functions');
-const firebase = require('firebase');
-const app = require('express')();
-const React = require('react');
-const ReactDOMServer = require('react-dom/server');
+const admin = require('firebase-admin');
+const Language = require('@google-cloud/language');
+const express = require('express');
 
-// React App
-const ServerApp = React.createFactory(require('./build/server.bundle.js').default);
-const template = require('./template');
+const app = express();
+const language = new Language({projectId: process.env.GCLOUD_PROJECT});
 
-// Server-side Data Loading
-const appConfig = functions.config().firebase;
-const database = require('./firebase-database');
-database.initializeApp(appConfig);
+admin.initializeApp(functions.config().firebase);
 
-// Helper function to get the markup from React, inject the initial state, and
-// send the server-side markup to the client
-const renderApplication = (url, res, initialState) => {
-  const html = ReactDOMServer.renderToString(ServerApp({url: url, context: {}, initialState, appConfig}));
-  const templatedHtml = template({body: html, initialState: JSON.stringify(initialState)});
-  res.send(templatedHtml);
+// Express middleware that validates Firebase ID Tokens passed in the Authorization HTTP header.
+// The Firebase ID token needs to be passed as a Bearer token in the Authorization HTTP header like this:
+// `Authorization: Bearer <Firebase ID Token>`.
+// when decoded successfully, the ID Token content will be added as `req.user`.
+const authenticate = (req, res, next) => {
+  // console.log('1.functions index.js headers : ', req.headers);
+  if (!req.headers.authorization || !req.headers.authorization.startsWith('Bearer ')) {
+    res.status(403).send('Unauthorized');
+    return;
+  }
+  const idToken = req.headers.authorization.split('Bearer ')[1];
+  admin.auth().verifyIdToken(idToken).then(decodedIdToken => {
+    req.user = decodedIdToken;
+    next();
+  }).catch(error => {
+    res.status(403).send('Unauthorized');
+  });
 };
 
-app.get('/favicon.ico', function(req, res) {
-  res.send(204);
+app.use(authenticate);
+
+// POST /api/messages
+// Create a new message, get its sentiment using Google Cloud NLP,
+// and categorize the sentiment before saving.
+app.post('/api/messages', (req, res) => {
+
+  const message = req.body.message;
+  // console.log('1.functions index.js app.post /api/messages : ', message);
+  language.detectSentiment(message).then(results => {
+    const category = categorizeScore(results[0].score);
+    const data = {message: message, sentiment: results, category: category};
+    return admin.database().ref(`/usertoken/${req.user.uid}/messages`).push(data);
+  }).then(snapshot => {
+    return snapshot.ref.once('value');
+  }).then(snapshot => {
+    const val = snapshot.val();
+    res.status(201).json({message: val.message, category: val.category});
+  }).catch(error => {
+    // console.log('Error detecting sentiment or saving message', error.message);
+    res.sendStatus(500);
+  });
 });
 
-app.get('/:userId?', (req, res) => {
-  res.set('Cache-Control', 'public, max-age=60, s-maxage=180');
-  if (req.params.userId) {
-    // client is requesting user-details page with userId
-    // load the data for that employee and its direct reports
-    database.getEmployeeById(req.params.userId).then(resp => {
-      renderApplication(req.url, res, resp);
-    });
-  } else {
-    // index page. load data for all employees
-    database.getAllEmployees().then(resp => {
-      renderApplication(req.url, res, resp);
-    });
+// GET /api/messages?category={category}
+// Get all messages, optionally specifying a category to filter on
+app.get('/api/messages', (req, res) => {
+  const category = req.query.category;
+  // console.log('1.functions index.js app.get /api/messages category : ', category);
+  let query = admin.database().ref(`/usertoken/${req.user.uid}/messages`);
+
+  if (category && ['positive', 'negative', 'neutral'].indexOf(category) > -1) {
+    // Update the query with the valid category
+    query = query.orderByChild('category').equalTo(category);
+  } else if (category) {
+    return res.status(404).json({errorCode: 404, errorMessage: `category '${category}' not found`});
   }
+
+  query.once('value').then(snapshot => {
+    var messages = [];
+
+    snapshot.forEach(childSnapshot => {
+      messages.push({key: childSnapshot.key, message: childSnapshot.val().message});
+    });
+
+    return res.status(200).json(messages);
+  }).catch(error => {
+    // console.log('Error getting messages', error.message);
+    res.sendStatus(500);
+  });
 });
 
-app.get('/:configId?', (req, res) => {
-  res.set('Cache-Control', 'public, max-age=60, s-maxage=180');
-  if (req.params.configId) {
-    // client is requesting config page with configId
-    // load the config data for that configId
-    database.getConfigById(req.params.configId).then(resp => {
-      renderApplication(req.url, res, resp);
-    });
-  } else {
-    // index page. load default config
-    database.getDefaultConfig().then(resp => {
-      renderApplication(req.url, res, resp);
-    });
+// GET /api/message/{messageId}
+// Get details about a message
+app.get('/api/message/:messageId', (req, res) => {
+  const messageId = req.params.messageId;
+  // console.log('1.functions index.js app.get /api/message/:messageId : ', messageId);
+  admin.database().ref(`/usertoken/${req.user.uid}/messages/${messageId}`).once('value').then(snapshot => {
+    if (snapshot.val() !== null) {
+      // Cache details in the browser for 5 minutes
+      res.set('Cache-Control', 'private, max-age=300');
+      res.status(200).json(snapshot.val());
+    } else {
+      res.status(404).json({errorCode: 404, errorMessage: `message '${messageId}' not found`});
+    }
+  }).catch(error => {
+    // console.log('Error getting message details', messageId, error.message);
+    res.sendStatus(500);
+  });
+});
+
+// GET /api/configs
+// Get default config
+app.get('/api/configs', (req, res) => {
+  // const configId = req.query.configId;
+  // console.log('1.functions index.js app.get /api/configs (default)');
+  // loads default config
+  admin.database().ref(`/usertoken/${req.user.uid}/configs/default`).once('value').then(snapshot => {
+    if (snapshot.val() !== null) {
+  // console.log('2.functions index.js app.get /api/configs (default) : ',snapshot.val());
+      // Cache details in the browser for 5 minutes
+      res.set('Cache-Control', 'private, max-age=300');
+      res.status(200).json(snapshot.val());
+    }
+  });
+});
+
+// GET /api/config/{configId}
+// Get details about a config
+app.get('/api/config/:configId', (req, res) => {
+  const configId = req.params.configId;
+  // console.log('1.functions index.js app.get /api/config/:configId : ', configId);
+  admin.database().ref(`/usertoken/${req.user.uid}/configs/${configId}`).once('value').then(snapshot => {
+    if (snapshot.val() !== null) {
+      // Cache details in the browser for 5 minutes
+      res.set('Cache-Control', 'private, max-age=300');
+      res.status(200).json(snapshot.val());
+    } else {
+      res.status(404).json({errorCode: 404, errorMessage: `config '${configId}' not found`});
+    }
+  }).catch(error => {
+    // console.log('Error getting config details', configId, error.message);
+    res.sendStatus(500);
+  });
+});
+
+// Expose the API as a function
+exports.api = functions.https.onRequest(app);
+
+// Helper function to categorize a sentiment score as positive, negative, or neutral
+const categorizeScore = score => {
+  // console.log('1.functions index.js categorizeScore : ', categorizeScore);
+  if (score > 0.25) {
+    return 'positive';
+  } else if (score < -0.25) {
+    return 'negative';
   }
-});
-
-exports.app = functions.https.onRequest(app);
+  return 'neutral';
+};
