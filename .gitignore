@@ -1,4 +1,6 @@
 .firebaserc
+firebase-debug.log
 node_modules
 *.bundle.js
 functions/data-seed.json
+functions/api-functions-acc3a1a7695f.json
